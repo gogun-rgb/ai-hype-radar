@@ -1,0 +1,15 @@
+.env
+.env.local
+.env.*.local
+node_modules
+.next
+playwright-report
+test-results
+coverage
+.ai-hype-radar
+.agents
+.codex
+work
+outputs
+tsconfig.tsbuildinfo
+*.log
