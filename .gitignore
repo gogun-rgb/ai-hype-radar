@@ -11,5 +11,6 @@ coverage
 .codex
 work
 outputs
+reports
 tsconfig.tsbuildinfo
 *.log

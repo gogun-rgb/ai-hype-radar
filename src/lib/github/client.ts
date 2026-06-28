@@ -1,62 +1,73 @@
+import { z } from "zod";
+import { FetchTimeoutError, fetchWithTimeout } from "@/lib/api/fetch";
 import type { GitHubCommit, GitHubData, GitHubIssue, GitHubRelease, GitHubRepository, ParsedGitHubUrl } from "@/types/analysis";
 
-interface GitHubRepoResponse {
-  name: string;
-  full_name: string;
-  description: string | null;
-  html_url: string;
-  stargazers_count: number;
-  forks_count: number;
-  watchers_count: number;
-  open_issues_count: number;
-  language: string | null;
-  license: { spdx_id?: string | null; name?: string | null } | null;
-  created_at: string;
-  updated_at: string;
-  pushed_at: string | null;
-  topics?: string[];
-  owner: { login: string };
-}
+const GITHUB_TIMEOUT_MS = 15_000;
 
-interface GitHubIssueResponse {
-  id: number;
-  number: number;
-  title: string;
-  body: string | null;
-  html_url: string;
-  state: "open" | "closed";
-  created_at: string;
-  closed_at: string | null;
-  updated_at: string;
-  comments: number;
-  reactions?: { total_count?: number };
-  author_association?: string | null;
-  pull_request?: unknown;
-  user?: { login?: string; type?: string };
-}
+const githubRepoResponseSchema = z.object({
+  name: z.string(),
+  full_name: z.string(),
+  description: z.string().nullable(),
+  html_url: z.string().url(),
+  stargazers_count: z.number(),
+  forks_count: z.number(),
+  watchers_count: z.number(),
+  open_issues_count: z.number(),
+  language: z.string().nullable(),
+  license: z.object({ spdx_id: z.string().nullable().optional(), name: z.string().nullable().optional() }).nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  pushed_at: z.string().nullable(),
+  topics: z.array(z.string()).optional(),
+  owner: z.object({ login: z.string() })
+});
 
-interface GitHubCommitResponse {
-  sha: string;
-  html_url: string;
-  commit: {
-    message: string;
-    author?: {
-      name?: string | null;
-      date?: string | null;
-    };
-  };
-}
+const githubIssueResponseSchema = z.object({
+  id: z.number(),
+  number: z.number(),
+  title: z.string(),
+  body: z.string().nullable(),
+  html_url: z.string().url(),
+  state: z.enum(["open", "closed"]),
+  created_at: z.string(),
+  closed_at: z.string().nullable(),
+  updated_at: z.string(),
+  comments: z.number(),
+  reactions: z.object({ total_count: z.number().optional() }).optional(),
+  author_association: z.string().nullable().optional(),
+  pull_request: z.unknown().optional(),
+  user: z.object({ login: z.string().optional(), type: z.string().optional() }).optional()
+});
 
-interface GitHubReleaseResponse {
-  name: string | null;
-  tag_name: string;
-  published_at: string | null;
-  html_url: string;
-}
+const githubCommitResponseSchema = z.object({
+  sha: z.string(),
+  html_url: z.string().url(),
+  commit: z.object({
+    message: z.string(),
+    author: z
+      .object({
+        name: z.string().nullable().optional(),
+        date: z.string().nullable().optional()
+      })
+      .optional()
+  })
+});
 
-interface GitHubContributorResponse {
-  login: string;
-}
+const githubReleaseResponseSchema = z.object({
+  name: z.string().nullable(),
+  tag_name: z.string(),
+  published_at: z.string().nullable(),
+  html_url: z.string().url()
+});
+
+const githubContributorResponseSchema = z.object({
+  login: z.string()
+});
+
+type GitHubRepoResponse = z.infer<typeof githubRepoResponseSchema>;
+type GitHubIssueResponse = z.infer<typeof githubIssueResponseSchema>;
+type GitHubCommitResponse = z.infer<typeof githubCommitResponseSchema>;
+type GitHubReleaseResponse = z.infer<typeof githubReleaseResponseSchema>;
 
 export class GitHubApiError extends Error {
   constructor(
@@ -70,13 +81,13 @@ export class GitHubApiError extends Error {
 
 export async function fetchGitHubData(parsed: ParsedGitHubUrl): Promise<GitHubData> {
   const [repo, issues, closedIssues, commits, releases, readme, contributors] = await Promise.all([
-    githubJson<GitHubRepoResponse>(`/repos/${parsed.owner}/${parsed.repo}`),
-    githubJson<GitHubIssueResponse[]>(`/repos/${parsed.owner}/${parsed.repo}/issues?state=all&sort=created&direction=desc&per_page=30`),
-    githubJson<GitHubIssueResponse[]>(`/repos/${parsed.owner}/${parsed.repo}/issues?state=closed&sort=updated&direction=desc&per_page=20`),
-    githubJson<GitHubCommitResponse[]>(`/repos/${parsed.owner}/${parsed.repo}/commits?per_page=30`),
-    githubJson<GitHubReleaseResponse[]>(`/repos/${parsed.owner}/${parsed.repo}/releases?per_page=5`),
+    githubJson(`/repos/${parsed.owner}/${parsed.repo}`, githubRepoResponseSchema),
+    githubJson(`/repos/${parsed.owner}/${parsed.repo}/issues?state=all&sort=created&direction=desc&per_page=30`, z.array(githubIssueResponseSchema)),
+    githubJson(`/repos/${parsed.owner}/${parsed.repo}/issues?state=closed&sort=updated&direction=desc&per_page=20`, z.array(githubIssueResponseSchema)),
+    githubJson(`/repos/${parsed.owner}/${parsed.repo}/commits?per_page=30`, z.array(githubCommitResponseSchema)),
+    githubJson(`/repos/${parsed.owner}/${parsed.repo}/releases?per_page=5`, z.array(githubReleaseResponseSchema)),
     githubText(`/repos/${parsed.owner}/${parsed.repo}/readme`, "application/vnd.github.raw").catch(() => ""),
-    githubJson<GitHubContributorResponse[]>(`/repos/${parsed.owner}/${parsed.repo}/contributors?per_page=100`).catch(() => [])
+    githubJson(`/repos/${parsed.owner}/${parsed.repo}/contributors?per_page=100`, z.array(githubContributorResponseSchema)).catch(() => [])
   ]);
 
   const filteredIssues = issues.map(mapIssue).filter((issue) => !issue.isPullRequest);
@@ -94,9 +105,13 @@ export async function fetchGitHubData(parsed: ParsedGitHubUrl): Promise<GitHubDa
   };
 }
 
-async function githubJson<T>(path: string): Promise<T> {
+async function githubJson<T>(path: string, schema: z.ZodType<T>): Promise<T> {
   const response = await githubFetch(path, "application/vnd.github+json");
-  return (await response.json()) as T;
+  try {
+    return schema.parse(await response.json());
+  } catch {
+    throw new GitHubApiError("GitHub API returned an unexpected response shape.", 502, "GITHUB_MALFORMED_RESPONSE");
+  }
 }
 
 async function githubText(path: string, accept: string): Promise<string> {
@@ -106,14 +121,25 @@ async function githubText(path: string, accept: string): Promise<string> {
 
 async function githubFetch(path: string, accept: string): Promise<Response> {
   const token = process.env.GITHUB_TOKEN;
-  const response = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      Accept: accept,
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    next: { revalidate: 0 }
-  });
+  let response: Response;
+
+  try {
+    response = await fetchWithTimeout(
+      `https://api.github.com${path}`,
+      {
+        headers: {
+          Accept: accept,
+          "X-GitHub-Api-Version": "2022-11-28",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        next: { revalidate: 0 }
+      },
+      GITHUB_TIMEOUT_MS
+    );
+  } catch (error) {
+    const message = error instanceof FetchTimeoutError ? "GitHub API request timed out." : "GitHub API request failed before a response was received.";
+    throw new GitHubApiError(message, 502, "GITHUB_NETWORK_ERROR");
+  }
 
   if (!response.ok) {
     const code =

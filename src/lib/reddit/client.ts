@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from "@/lib/api/fetch";
 import type { DataSourceStatus, RedditPost } from "@/types/analysis";
 
 interface RedditListingResponse {
@@ -23,6 +24,7 @@ interface RedditTokenResponse {
 }
 
 type RedditChildData = NonNullable<NonNullable<RedditListingResponse["data"]>["children"]>[number]["data"];
+const REDDIT_TIMEOUT_MS = 10_000;
 
 export interface RedditSearchResult {
   posts: RedditPost[];
@@ -49,13 +51,17 @@ export async function searchReddit(queryTerms: string[]): Promise<RedditSearchRe
 
     for (const term of queryTerms.slice(0, 5)) {
       const encoded = encodeURIComponent(term);
-      const response = await fetch(`https://oauth.reddit.com/search?q=${encoded}&sort=relevance&t=year&limit=10`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "User-Agent": process.env.REDDIT_USER_AGENT ?? "ai-hype-radar/0.1"
+      const response = await fetchWithTimeout(
+        `https://oauth.reddit.com/search?q=${encoded}&sort=relevance&t=year&limit=10`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "User-Agent": process.env.REDDIT_USER_AGENT ?? "ai-hype-radar/0.1"
+          },
+          next: { revalidate: 0 }
         },
-        next: { revalidate: 0 }
-      });
+        REDDIT_TIMEOUT_MS
+      );
 
       if (response.status === 429) {
         return {
@@ -91,15 +97,19 @@ async function getRedditToken(): Promise<string> {
   const clientId = process.env.REDDIT_CLIENT_ID ?? "";
   const clientSecret = process.env.REDDIT_CLIENT_SECRET ?? "";
   const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-  const response = await fetch("https://www.reddit.com/api/v1/access_token", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": process.env.REDDIT_USER_AGENT ?? "ai-hype-radar/0.1"
+  const response = await fetchWithTimeout(
+    "https://www.reddit.com/api/v1/access_token",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": process.env.REDDIT_USER_AGENT ?? "ai-hype-radar/0.1"
+      },
+      body: "grant_type=client_credentials"
     },
-    body: "grant_type=client_credentials"
-  });
+    REDDIT_TIMEOUT_MS
+  );
 
   if (!response.ok) {
     throw new Error("Reddit 인증에 실패했습니다.");

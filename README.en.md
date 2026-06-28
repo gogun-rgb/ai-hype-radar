@@ -1,5 +1,7 @@
 # AI Hype Radar
 
+[![CI](https://github.com/gogun-rgb/ai-hype-radar/actions/workflows/ci.yml/badge.svg)](https://github.com/gogun-rgb/ai-hype-radar/actions/workflows/ci.yml)
+
 [Korean README](README.md)
 
 AI Hype Radar is a Next.js portfolio project that analyzes GitHub and Reddit signals to separate open-source AI project traction from real-world usefulness and risk. The app does not ask an LLM to invent scores. It calculates Hype Score, Reality Score, and Risk Score from deterministic normalized signals, then optionally uses OpenAI only to enrich the qualitative explanation. Rule-based analysis and Demo Mode work without API keys.
@@ -12,6 +14,17 @@ AI Hype Radar is a Next.js portfolio project that analyzes GitHub and Reddit sig
 - Graceful fallback when OpenAI, Reddit, or Supabase is not configured
 - TypeScript types, Vitest unit/integration tests, Playwright E2E, and GitHub Actions CI
 - Canva-ready card-news prompt generation for repurposing an analysis result
+
+## Current Verification Status
+
+Latest local verification:
+
+| Check | Result |
+| --- | --- |
+| Vitest unit/integration tests | 11 files, 29 tests passed |
+| Playwright E2E | 2 desktop/mobile tests passed |
+| Coverage | Statements 83.2%, Branches 61.33%, Functions 79.02%, Lines 83.44% |
+| CI | GitHub Actions runs typecheck, lint, test, coverage, build, and E2E |
 
 ## Features
 
@@ -50,6 +63,20 @@ src/
   tests/                Unit, integration, and E2E tests
 supabase/migrations     Database schema
 .github/workflows       CI workflow
+```
+
+```mermaid
+flowchart LR
+  A["GitHub URL"] --> B["Route Handler"]
+  B --> C["GitHub Collector"]
+  B --> D["Optional Reddit Collector"]
+  C --> E["Preprocessing"]
+  D --> E
+  E --> F["Deterministic Scoring"]
+  F --> G["Optional OpenAI Summary"]
+  F --> H["File or Supabase Storage"]
+  G --> I["Analysis UI"]
+  H --> I
 ```
 
 ## Quick Start
@@ -91,6 +118,13 @@ https://github.com/vercel/ai
 
 Never commit real API keys. Keep them in `.env.local`.
 
+Demo Mode and API-key-free execution:
+
+- `DEMO_MODE=true` uses explicit demo fallback data when external APIs fail.
+- `E2E_DEMO=true` is a test-only setting used by Playwright to avoid live external API calls.
+- Without Supabase, analyses are stored in `.ai-hype-radar/analyses.json`.
+- Local file storage is intended for development and demo use, not multi-user production hosting.
+
 ## Scoring
 
 All scores are clamped to 0-100.
@@ -119,6 +153,16 @@ Risk Score:
 - Vendor/API dependency: 15%
 
 Reality is better when higher. Risk is more dangerous when higher.
+
+## How to Interpret the Scores
+
+| Score | Higher means | Lower means |
+| --- | --- | --- |
+| Hype Score | Strong public attention and recent activity | Weak public traction or activity signals |
+| Reality Score | Strong documentation, maintenance, and real-use evidence | More validation is needed before trusting real-world utility |
+| Risk Score | More installation, cost, security, or dependency risk signals | Fewer visible risk signals in collected evidence |
+
+Confidence Level describes the quality of the evidence behind the scores. When data is sparse, the app lowers confidence and exposes Data Coverage instead of overstating certainty.
 
 ## Missing Data Handling
 
@@ -159,16 +203,17 @@ type DataSourceStatus =
 
 ## Verification
 
-```bash
-npm run typecheck
-npm run lint
-npm run test
-npm run build
-npm run test:e2e
-npm run check
-```
+| Command | Purpose |
+| --- | --- |
+| `npm run typecheck` | Generate Next.js route types and run TypeScript checks |
+| `npm run lint` | Run ESLint |
+| `npm run test` | Run Vitest unit and integration tests |
+| `npm run test:coverage` | Measure coverage and enforce thresholds |
+| `npm run build` | Verify the production build |
+| `npm run test:e2e` | Run Playwright desktop/mobile E2E |
+| `npm run check` | Run typecheck, lint, test, and build |
 
-GitHub Actions CI runs the same quality gates. The CI workflow verifies the project only and does not deploy it.
+GitHub Actions CI runs typecheck, lint, test, coverage, build, and E2E. The workflow verifies the project only and does not deploy it.
 
 ## Supabase Setup
 
@@ -186,6 +231,15 @@ Then fill in `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env
 - The app does not log API keys or authorization headers.
 - Preprocessing masks strings that look like API keys or tokens.
 - Only `github.com/owner/repo`-style repository URLs are accepted.
+- External API calls use timeouts and fall back gracefully where possible.
+- See [SECURITY.md](SECURITY.md) for reporting instructions and static-analysis limitations.
+
+## Maintenance Docs
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): local setup, testing expectations, and PR guidance
+- [CHANGELOG.md](CHANGELOG.md): release history
+- [SECURITY.md](SECURITY.md): vulnerability reporting and analysis limitations
+- [tests/README.md](tests/README.md): test locations and commands
 
 ## Roadmap
 

@@ -3,6 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "description": "Analyze GitHub and Reddit signals to separate real AI project utility from hype.",
+  "author": "Go Geon",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gogun-rgb/ai-hype-radar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gogun-rgb/ai-hype-radar/issues"
+  },
+  "overrides": {
+    "postcss": "8.5.15"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "packageManager": "npm@11.16.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,6 +26,7 @@
     "typegen": "next typegen",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "node scripts/run-e2e.mjs",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build"
@@ -35,6 +51,7 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.3",
+    "@vitest/coverage-v8": "4.1.9",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.9",
     "jsdom": "29.1.1",

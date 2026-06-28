@@ -1,7 +1,9 @@
+import { fetchWithTimeout } from "@/lib/api/fetch";
 import { qualitativeJsonSchema, qualitativeSummarySchema } from "@/lib/openai/schema";
 import type { AnalysisSource, QualitativeSummary, ReadmeSignals, Scores } from "@/types/analysis";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const OPENAI_TIMEOUT_MS = 30_000;
 
 interface OpenAIChatCompletionResponse {
   choices?: Array<{
@@ -23,52 +25,56 @@ export async function generateQualitativeSummary(input: {
 
   try {
     const sourceIds = new Set(input.sources.map((source) => source.id));
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
+    const response = await fetchWithTimeout(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: process.env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL,
+          messages: [
+            {
+              role: "system",
+              content:
+                "너는 한국어 데이터 분석 리포터다. 사실을 만들지 말고 제공된 sourceId만 근거로 사용한다. 점수는 이미 계산되었으므로 바꾸지 않는다."
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                repoName: input.repoName,
+                scores: {
+                  hype: input.scores.hype.value,
+                  reality: input.scores.reality.value,
+                  risk: input.scores.risk.value,
+                  confidence: input.scores.confidence
+                },
+                readmeSignals: input.readmeSignals,
+                sources: input.sources.slice(0, 35).map((source) => ({
+                  sourceId: source.id,
+                  sourceType: source.sourceType,
+                  title: source.title,
+                  summary: source.summary,
+                  sentiment: source.sentiment,
+                  category: source.category
+                }))
+              })
+            }
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "ai_hype_radar_qualitative_summary",
+              strict: true,
+              schema: qualitativeJsonSchema
+            }
+          }
+        })
       },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL,
-        messages: [
-          {
-            role: "system",
-            content:
-              "너는 한국어 데이터 분석 리포터다. 사실을 만들지 말고 제공된 sourceId만 근거로 사용한다. 점수는 이미 계산되었으므로 바꾸지 않는다."
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              repoName: input.repoName,
-              scores: {
-                hype: input.scores.hype.value,
-                reality: input.scores.reality.value,
-                risk: input.scores.risk.value,
-                confidence: input.scores.confidence
-              },
-              readmeSignals: input.readmeSignals,
-              sources: input.sources.slice(0, 35).map((source) => ({
-                sourceId: source.id,
-                sourceType: source.sourceType,
-                title: source.title,
-                summary: source.summary,
-                sentiment: source.sentiment,
-                category: source.category
-              }))
-            })
-          }
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "ai_hype_radar_qualitative_summary",
-            strict: true,
-            schema: qualitativeJsonSchema
-          }
-        }
-      })
-    });
+      OPENAI_TIMEOUT_MS
+    );
 
     if (!response.ok) {
       return heuristicSummary(input, "AI 해설 생성에 실패했습니다. 정량 분석 결과를 유지합니다.");
