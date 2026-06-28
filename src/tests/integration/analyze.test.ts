@@ -17,6 +17,8 @@ describe("runAnalysis integration", () => {
     process.env = {
       ...originalEnv,
       DEMO_MODE: "false",
+      E2E_DEMO: "false",
+      GITHUB_TOKEN: "",
       OPENAI_API_KEY: "",
       REDDIT_CLIENT_ID: "",
       REDDIT_CLIENT_SECRET: "",
