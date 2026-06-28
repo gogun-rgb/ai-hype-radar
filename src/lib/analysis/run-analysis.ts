@@ -40,7 +40,9 @@ export async function runAnalysis(githubUrl: string): Promise<AnalysisResult> {
   }
 
   const readmeSignals = analyzeReadme(github.readme);
-  const reddit = isDemo ? { posts: [] as RedditPost[], disabledReason: "DEMO MODE에서는 Reddit 실제 검색을 수행하지 않았습니다." } : await searchReddit(buildRedditQueries(github));
+  const reddit = isDemo
+    ? { posts: [] as RedditPost[], status: "not_configured" as const, disabledReason: "DEMO MODE에서는 Reddit 실제 검색을 수행하지 않았습니다." }
+    : await searchReddit(buildRedditQueries(github));
   if (reddit.disabledReason) {
     notices.push(reddit.disabledReason);
   }
@@ -49,6 +51,7 @@ export async function runAnalysis(githubUrl: string): Promise<AnalysisResult> {
   const scores = calculateScores({
     github,
     redditPosts: reddit.posts,
+    redditStatus: reddit.status,
     sources,
     readmeSignals,
     previousSnapshot

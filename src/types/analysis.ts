@@ -2,6 +2,8 @@ export type Sentiment = "positive" | "negative" | "neutral";
 
 export type ConfidenceLevel = "High" | "Medium" | "Low";
 
+export type DataSourceStatus = "available" | "unavailable" | "not_configured" | "rate_limited" | "failed" | "insufficient";
+
 export type SourceType =
   | "github_issue"
   | "github_commit"
@@ -141,6 +143,9 @@ export interface ScoreBreakdownItem {
   label: string;
   value: number;
   weight: number;
+  originalWeight: number;
+  available: boolean;
+  status?: DataSourceStatus;
   explanation: string;
 }
 
@@ -148,6 +153,27 @@ export interface ScoreResult {
   value: number;
   provisional: boolean;
   breakdown: ScoreBreakdownItem[];
+  availableWeight: number;
+  missingSignals: string[];
+  dataLimited: boolean;
+}
+
+export interface DataCoverageSource {
+  key: string;
+  label: string;
+  status: DataSourceStatus;
+  collected: number;
+  expected: number;
+  coverage: number;
+  affectsScore: boolean;
+  note: string;
+}
+
+export interface DataCoverage {
+  overall: number;
+  scoreImpact: "complete" | "partial" | "limited";
+  sources: DataCoverageSource[];
+  missingCriticalSignals: string[];
 }
 
 export interface Scores {
@@ -156,6 +182,7 @@ export interface Scores {
   risk: ScoreResult;
   confidence: ConfidenceLevel;
   confidenceReasons: string[];
+  dataCoverage: DataCoverage;
 }
 
 export interface QualitativePoint {

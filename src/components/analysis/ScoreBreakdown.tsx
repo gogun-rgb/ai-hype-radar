@@ -15,11 +15,20 @@ export function ScoreBreakdown({ title, score }: { title: string; score: ScoreRe
               <div className="h-full rounded-full bg-[#0f766e]" style={{ width: `${item.value}%` }} />
             </div>
             <p className="mt-2 text-xs leading-5 text-[#667085]">
-              가중치 {Math.round(item.weight * 100)}% · {item.explanation}
+              Effective weight {Math.round(item.weight * 100)}%
+              {item.originalWeight !== item.weight ? ` · original ${Math.round(item.originalWeight * 100)}%` : ""} · {item.explanation}
             </p>
+            {!item.available ? (
+              <p className="mt-1 text-xs font-semibold text-[#b54708]">Excluded from this score because the source is {item.status ?? "unavailable"}.</p>
+            ) : null}
           </div>
         ))}
       </div>
+      {score.dataLimited ? (
+        <p className="mt-5 rounded-md bg-[#fffcf5] p-3 text-xs font-semibold leading-5 text-[#b54708]">
+          Limited data: {score.missingSignals.join(", ")} did not contribute to this score.
+        </p>
+      ) : null}
     </section>
   );
 }

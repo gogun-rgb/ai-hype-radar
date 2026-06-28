@@ -1,4 +1,4 @@
-import type { RedditPost } from "@/types/analysis";
+import type { DataSourceStatus, RedditPost } from "@/types/analysis";
 
 interface RedditListingResponse {
   data?: {
@@ -26,6 +26,7 @@ type RedditChildData = NonNullable<NonNullable<RedditListingResponse["data"]>["c
 
 export interface RedditSearchResult {
   posts: RedditPost[];
+  status: DataSourceStatus;
   disabledReason?: string;
 }
 
@@ -37,6 +38,7 @@ export async function searchReddit(queryTerms: string[]): Promise<RedditSearchRe
   if (!isRedditConfigured()) {
     return {
       posts: [],
+      status: "not_configured",
       disabledReason: "Reddit API가 연결되지 않아 GitHub 데이터 중심으로 분석했습니다."
     };
   }
@@ -55,6 +57,14 @@ export async function searchReddit(queryTerms: string[]): Promise<RedditSearchRe
         next: { revalidate: 0 }
       });
 
+      if (response.status === 429) {
+        return {
+          posts: Array.from(unique.values()).slice(0, 25),
+          status: "rate_limited",
+          disabledReason: "Reddit API rate limit으로 일부 결과만 반영했습니다."
+        };
+      }
+
       if (!response.ok) {
         continue;
       }
@@ -66,10 +76,12 @@ export async function searchReddit(queryTerms: string[]): Promise<RedditSearchRe
       }
     }
 
-    return { posts: Array.from(unique.values()).slice(0, 25) };
+    const posts = Array.from(unique.values()).slice(0, 25);
+    return { posts, status: posts.length > 0 ? "available" : "insufficient" };
   } catch {
     return {
       posts: [],
+      status: "failed",
       disabledReason: "Reddit API 요청에 실패해 GitHub 데이터 중심으로 분석했습니다."
     };
   }

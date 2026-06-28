@@ -1,37 +1,56 @@
 # AI Hype Radar
 
-[한국어 README](README.md)
+[Korean README](README.md)
 
-AI Hype Radar is a Next.js MVP that analyzes GitHub and Reddit signals to help separate real open-source AI project utility from hype.
+AI Hype Radar is a Next.js portfolio project that analyzes GitHub and Reddit signals to separate open-source AI project traction from real-world usefulness and risk. The app does not ask an LLM to invent scores. It calculates Hype Score, Reality Score, and Risk Score from deterministic normalized signals, then optionally uses OpenAI only to enrich the qualitative explanation. Rule-based analysis and Demo Mode work without API keys.
 
-The app does not ask an LLM to invent scores. It first calculates Hype, Reality, and Risk scores from normalized quantitative signals, then optionally uses OpenAI only for Korean-language explanation, issue grouping, README claim comparison, and Canva prompt writing.
+## Portfolio Highlights
+
+- End-to-end analysis flow from GitHub URL validation to data collection, scoring, evidence cards, persistence, and result UI
+- Fair scoring when Reddit data is missing: unavailable signals are excluded and remaining weights are normalized
+- Data Coverage and Confidence Level make missing data visible instead of hiding it inside a score
+- Graceful fallback when OpenAI, Reddit, or Supabase is not configured
+- TypeScript types, Vitest unit/integration tests, Playwright E2E, and GitHub Actions CI
+- Canva-ready card-news prompt generation for repurposing an analysis result
 
 ## Features
 
 - GitHub repository URL validation
-- GitHub repository metadata, recent issues, commits, releases, contributors, and README collection
+- GitHub metadata, recent issues, commits, releases, contributors, and README collection
 - Reddit official API search when credentials are configured
-- Safe fallback when Reddit, OpenAI, or Supabase is not configured
-- Deterministic Hype Score, Reality Score, Risk Score, and Confidence Level
-- Evidence cards linked back to GitHub issues, Reddit posts, or README
+- Explicit Reddit status handling for not configured, failed, rate limited, insufficient, and available data
+- Deterministic Hype Score, Reality Score, Risk Score, Confidence Level, and Data Coverage
+- Evidence cards linked back to GitHub issues, Reddit posts, or README sections
 - Canva-ready 6-slide vertical card-news prompt
-- File-based demo storage when Supabase is unavailable
-- Unit, integration, and Playwright E2E tests
+- File-based persistence when Supabase is unavailable
 
 ## Tech Stack
 
-- Next.js App Router
-- TypeScript
-- Tailwind CSS
-- Recharts
-- Zod
-- Lucide Icons
-- Vitest
-- Playwright
-- GitHub REST API
-- Reddit API
-- OpenAI API
-- Supabase PostgreSQL
+- Next.js App Router, React, TypeScript
+- Tailwind CSS, Recharts, Lucide Icons
+- Zod, Vitest, React Testing Library, Playwright
+- GitHub REST API, Reddit API, OpenAI API
+- Supabase PostgreSQL or local file storage
+- GitHub Actions CI
+
+## Project Structure
+
+```text
+src/
+  app/                  Next.js pages and route handlers
+  components/           Analysis UI, charts, layout components
+  config/scoring.ts     Score weights and normalization thresholds
+  lib/analysis          Analysis orchestration and source building
+  lib/github            GitHub API client and demo fallback
+  lib/reddit            Reddit OAuth search client
+  lib/openai            Optional structured qualitative summary
+  lib/scoring           Deterministic score calculation utilities
+  lib/preprocessing     README parsing, classification, sanitization
+  lib/storage           File and Supabase persistence
+  tests/                Unit, integration, and E2E tests
+supabase/migrations     Database schema
+.github/workflows       CI workflow
+```
 
 ## Quick Start
 
@@ -48,13 +67,7 @@ Copy-Item .env.example .env.local
 npm.cmd run dev
 ```
 
-Open the app at:
-
-```text
-http://localhost:3000
-```
-
-Try this example repository:
+Open `http://localhost:3000` and try:
 
 ```text
 https://github.com/vercel/ai
@@ -67,40 +80,30 @@ https://github.com/vercel/ai
 | `GITHUB_TOKEN` | Increases GitHub API rate limits | Public repositories are fetched anonymously |
 | `OPENAI_API_KEY` | Enables AI-generated explanation and claim comparison | Rule-based summary is used |
 | `OPENAI_MODEL` | Model used for OpenAI explanation | Defaults to `gpt-4o-mini` |
-| `REDDIT_CLIENT_ID` | Reddit OAuth search | Reddit analysis is disabled |
-| `REDDIT_CLIENT_SECRET` | Reddit OAuth search | Reddit analysis is disabled |
-| `REDDIT_USER_AGENT` | Required Reddit API User-Agent | Reddit analysis is disabled |
+| `REDDIT_CLIENT_ID` | Reddit OAuth search | Reddit signal is excluded from scoring |
+| `REDDIT_CLIENT_SECRET` | Reddit OAuth search | Reddit signal is excluded from scoring |
+| `REDDIT_USER_AGENT` | Required Reddit API User-Agent | Reddit signal is excluded from scoring |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL | File-based storage is used |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase public anon key | Not required for the current server-side MVP |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side persistence | File-based storage is used |
-| `NEXT_PUBLIC_APP_URL` | Public app URL | Localhost is used |
-| `DEMO_MODE` | Enables explicit demo fallback when external APIs fail | If `false`, failures are returned as errors |
+| `NEXT_PUBLIC_APP_URL` | App URL | Localhost is used |
+| `DEMO_MODE` | Demo fallback when external APIs fail | If `true`, explicit sample data is used |
 
 Never commit real API keys. Keep them in `.env.local`.
-
-## Scripts
-
-```bash
-npm run dev
-npm run typegen
-npm run typecheck
-npm run lint
-npm run test
-npm run build
-npm run test:e2e
-```
 
 ## Scoring
 
 All scores are clamped to 0-100.
 
 Hype Score:
-- Star momentum or first-analysis star momentum: 40%
+
+- Star momentum or age-adjusted first-analysis star momentum: 40%
 - Reddit mentions: 30%
 - Fork momentum or fork ratio: 15%
 - Recent issue and commit activity: 15%
 
 Reality Score:
+
 - Recent commit activity: 20%
 - Installation success signals: 25%
 - Issue resolution speed: 20%
@@ -108,6 +111,7 @@ Reality Score:
 - Real output examples: 15%
 
 Risk Score:
+
 - Unresolved bugs: 25%
 - Security and privacy signals: 25%
 - Cost uncertainty: 20%
@@ -116,13 +120,55 @@ Risk Score:
 
 Reality is better when higher. Risk is more dangerous when higher.
 
-## Data Limitations
+## Missing Data Handling
 
-- The first analysis cannot know historical GitHub star growth from the REST API alone, so Hype Score is marked provisional.
-- Re-running the same repository stores snapshots and enables real delta comparison.
-- If Reddit is not connected, the app clearly states that analysis is GitHub-centered.
-- If OpenAI fails, quantitative scoring still works.
-- Demo fallback data is visibly labeled as DEMO and is not presented as real user data.
+AI Hype Radar distinguishes “no data” from “real lack of reaction.”
+
+- If Reddit credentials are missing or the API fails, Reddit is not treated as a zero score.
+- Unavailable signals are excluded and the remaining available weights are normalized.
+- If Reddit search succeeds but finds no posts, that is counted as a low mention signal.
+- Missing or limited data is reflected in Data Coverage and Confidence Level.
+- If all core signals are missing, the app does not invent a healthy score; it returns a low-confidence, data-limited result.
+
+Weight normalization:
+
+```text
+effectiveWeight = originalWeight / sumOfAvailableWeights
+```
+
+## API and Stored Data
+
+The analysis API returns coverage metadata inside `analysis.scores`.
+
+- `hype`, `reality`, `risk`: score value, breakdown, original weight, effective weight, missing signals
+- `confidence`: `High`, `Medium`, or `Low`
+- `confidenceReasons`: why the confidence level was assigned
+- `dataCoverage`: source status, collected count, expected count, coverage, and score impact
+
+Data source status:
+
+```ts
+type DataSourceStatus =
+  | "available"
+  | "unavailable"
+  | "not_configured"
+  | "rate_limited"
+  | "failed"
+  | "insufficient";
+```
+
+## Verification
+
+```bash
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+npm run test:e2e
+npm run check
+```
+
+GitHub Actions CI runs the same quality gates. The CI workflow verifies the project only and does not deploy it.
 
 ## Supabase Setup
 
@@ -132,7 +178,7 @@ Create a Supabase project, open SQL Editor, and run:
 supabase/migrations/001_initial_schema.sql
 ```
 
-Then fill in `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+Then fill in `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`. If Supabase is not configured, analyses are stored in a local file.
 
 ## Security Notes
 

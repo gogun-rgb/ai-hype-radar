@@ -1,14 +1,16 @@
 import { SCORING_CONFIG } from "@/config/scoring";
 import { classifyCategory, classifySentiment } from "@/lib/preprocessing/classify";
-import { clampScore, daysBetween, median, normalize } from "@/lib/scoring/utils";
+import { calculateWeightedScore, clampScore, daysBetween, median, normalize, type WeightedSignal } from "@/lib/scoring/utils";
 import type {
   AnalysisSource,
   ConfidenceLevel,
+  DataCoverage,
+  DataCoverageSource,
+  DataSourceStatus,
   GitHubData,
   ReadmeSignals,
   RedditPost,
   RepositorySnapshot,
-  ScoreBreakdownItem,
   ScoreResult,
   Scores
 } from "@/types/analysis";
@@ -19,24 +21,32 @@ export interface ScoreInput {
   sources: AnalysisSource[];
   readmeSignals: ReadmeSignals;
   previousSnapshot?: RepositorySnapshot | null;
+  redditStatus?: DataSourceStatus;
 }
 
 export function calculateScores(input: ScoreInput): Scores {
-  const hype = calculateHypeScore(input);
-  const reality = calculateRealityScore(input);
-  const risk = calculateRiskScore(input);
-  const confidence = calculateConfidence(input);
+  const normalizedInput = {
+    ...input,
+    redditStatus: input.redditStatus ?? inferRedditStatus(input.redditPosts)
+  };
+  const dataCoverage = calculateDataCoverage(normalizedInput);
+  const hype = calculateHypeScore(normalizedInput);
+  const reality = calculateRealityScore(normalizedInput);
+  const risk = calculateRiskScore(normalizedInput);
+  const confidence = calculateConfidence(normalizedInput, dataCoverage);
 
   return {
     hype,
     reality,
     risk,
     confidence: confidence.level,
-    confidenceReasons: confidence.reasons
+    confidenceReasons: confidence.reasons,
+    dataCoverage
   };
 }
 
 export function calculateHypeScore(input: ScoreInput): ScoreResult {
+  const redditStatus = input.redditStatus ?? inferRedditStatus(input.redditPosts);
   const { github, redditPosts, previousSnapshot } = input;
   const repo = github.repository;
   const ageDays = Math.max(1, daysBetween(repo.createdAt));
@@ -53,44 +63,51 @@ export function calculateHypeScore(input: ScoreInput): ScoreResult {
     : normalize(repo.stars === 0 ? 0 : repo.forks / repo.stars, SCORING_CONFIG.normalization.highForkRatio);
 
   const redditMentions = normalize(redditPosts.length, SCORING_CONFIG.normalization.highRedditMentions);
+  const redditAvailable = isScoreAvailable(redditStatus);
   const activity = clampScore(
     normalize(recentIssues, SCORING_CONFIG.normalization.highRecentIssueCount) * 0.45 +
       normalize(recentCommits, SCORING_CONFIG.normalization.highRecentCommitCount) * 0.55
   );
 
-  const breakdown: ScoreBreakdownItem[] = [
-    {
-      label: provisional ? "저장소 연령 대비 스타 모멘텀" : "이전 Snapshot 대비 스타 증가",
-      value: starMomentum,
-      weight: SCORING_CONFIG.hype.starMomentumWeight,
-      explanation: provisional
-        ? "최초 분석이라 과거 스타 수 대신 생성일 대비 현재 스타 수를 제한적으로 사용했습니다."
-        : "이전 분석 Snapshot과 현재 스타 수를 비교했습니다."
-    },
-    {
-      label: "Reddit 언급량",
-      value: redditMentions,
-      weight: SCORING_CONFIG.hype.redditMentionsWeight,
-      explanation:
-        redditPosts.length > 0
-          ? `${redditPosts.length}개의 Reddit 게시물을 반영했습니다.`
-          : "Reddit 데이터가 없거나 연결되지 않아 0점으로 계산했습니다."
-    },
-    {
-      label: provisional ? "포크 비율" : "이전 Snapshot 대비 포크 증가",
-      value: forkMomentum,
-      weight: SCORING_CONFIG.hype.forkMomentumWeight,
-      explanation: provisional ? "현재 스타 대비 포크 비율을 사용했습니다." : "이전 Snapshot과 현재 포크 수를 비교했습니다."
-    },
-    {
-      label: "최근 Issue·Commit 활동",
-      value: activity,
-      weight: SCORING_CONFIG.hype.activityWeight,
-      explanation: `최근 30일 Issue ${recentIssues}개, Commit ${recentCommits}개를 반영했습니다.`
-    }
-  ];
-
-  return weightedResult(breakdown, provisional);
+  return buildScoreResult(
+    [
+      {
+        label: provisional ? "저장소 연령 대비 스타 모멘텀" : "이전 Snapshot 대비 스타 증가",
+        value: starMomentum,
+        weight: SCORING_CONFIG.hype.starMomentumWeight,
+        available: true,
+        status: "available",
+        explanation: provisional
+          ? "최초 분석이라 과거 스타 수 대신 생성일 대비 현재 스타 수를 제한적으로 사용했습니다."
+          : "이전 분석 Snapshot과 현재 스타 수를 비교했습니다."
+      },
+      {
+        label: "Reddit 언급량",
+        value: redditMentions,
+        weight: SCORING_CONFIG.hype.redditMentionsWeight,
+        available: redditAvailable,
+        status: redditStatus,
+        explanation: redditExplanation(redditStatus, redditPosts.length)
+      },
+      {
+        label: provisional ? "포크 비율" : "이전 Snapshot 대비 포크 증가",
+        value: forkMomentum,
+        weight: SCORING_CONFIG.hype.forkMomentumWeight,
+        available: true,
+        status: "available",
+        explanation: provisional ? "현재 스타 대비 포크 비율을 사용했습니다." : "이전 Snapshot과 현재 포크 수를 비교했습니다."
+      },
+      {
+        label: "최근 Issue·Commit 활동",
+        value: activity,
+        weight: SCORING_CONFIG.hype.activityWeight,
+        available: true,
+        status: "available",
+        explanation: `최근 30일 Issue ${recentIssues}개, Commit ${recentCommits}개를 반영했습니다.`
+      }
+    ],
+    provisional
+  );
 }
 
 export function calculateRealityScore(input: ScoreInput): ScoreResult {
@@ -127,54 +144,65 @@ export function calculateRealityScore(input: ScoreInput): ScoreResult {
         );
 
   const documentation = readmeSignals.completenessScore;
-  const realOutputSignals = readmeSignals.hasDemoSignals || sources.some((source) => /\b(demo|example|showcase|works)\b/i.test(source.summary))
-    ? 80
-    : 35;
+  const realOutputSignals = readmeSignals.hasDemoSignals || sources.some((source) => /\b(demo|example|showcase|works)\b/i.test(source.summary)) ? 80 : 35;
 
-  const breakdown: ScoreBreakdownItem[] = [
-    {
-      label: "최근 커밋 활동",
-      value: commitActivity,
-      weight: SCORING_CONFIG.reality.commitActivityWeight,
-      explanation: `최근 30일 Commit ${recentCommitCount}개와 마지막 Commit 시점을 반영했습니다.`
-    },
-    {
-      label: "설치 성공 후기",
-      value: installSuccess,
-      weight: SCORING_CONFIG.reality.installSuccessWeight,
-      explanation:
-        installRelated.length > 0
-          ? `설치 관련 근거 ${installRelated.length}개 중 긍정 반응 ${positiveInstall}개를 반영했습니다.`
-          : "설치 후기가 부족해 보수적인 기본값을 적용했습니다."
-    },
-    {
-      label: "Issue 해결 속도",
-      value: issueResolution,
-      weight: SCORING_CONFIG.reality.issueResolutionWeight,
-      explanation:
-        resolutionDays.length > 0
-          ? `닫힌 Issue의 해결 기간 중앙값은 ${Math.round(medianResolution)}일입니다.`
-          : "닫힌 Issue 데이터가 부족해 보수적인 기본값을 적용했습니다."
-    },
-    {
-      label: "문서 완성도",
-      value: documentation,
-      weight: SCORING_CONFIG.reality.documentationWeight,
-      explanation: "README의 설치, 사용법, 요구사항, 라이선스, 예제, 문제 해결 섹션을 확인했습니다."
-    },
-    {
-      label: "실제 결과물 사례",
-      value: realOutputSignals,
-      weight: SCORING_CONFIG.reality.realOutputWeight,
-      explanation: readmeSignals.hasDemoSignals ? "README에서 demo/example/showcase 신호를 찾았습니다." : "결과물 사례 신호가 제한적입니다."
-    }
-  ];
-
-  return weightedResult(breakdown, false);
+  return buildScoreResult(
+    [
+      {
+        label: "최근 커밋 활동",
+        value: commitActivity,
+        weight: SCORING_CONFIG.reality.commitActivityWeight,
+        available: github.commits.length > 0,
+        status: github.commits.length > 0 ? "available" : "insufficient",
+        explanation: `최근 30일 Commit ${recentCommitCount}개와 마지막 Commit 시점을 반영했습니다.`
+      },
+      {
+        label: "설치 성공 후기",
+        value: installSuccess,
+        weight: SCORING_CONFIG.reality.installSuccessWeight,
+        available: installRelated.length > 0,
+        status: installRelated.length > 0 ? "available" : "insufficient",
+        explanation:
+          installRelated.length > 0
+            ? `설치 관련 근거 ${installRelated.length}개 중 긍정 반응 ${positiveInstall}개를 반영했습니다.`
+            : "설치 후기가 부족해 이 신호는 점수에서 제외하고 다른 Reality 신호로 재정규화했습니다."
+      },
+      {
+        label: "Issue 해결 속도",
+        value: issueResolution,
+        weight: SCORING_CONFIG.reality.issueResolutionWeight,
+        available: resolutionDays.length > 0,
+        status: resolutionDays.length > 0 ? "available" : "insufficient",
+        explanation:
+          resolutionDays.length > 0
+            ? `닫힌 Issue의 해결 기간 중앙값은 ${Math.round(medianResolution)}일입니다.`
+            : "닫힌 Issue 데이터가 부족해 이 신호는 점수에서 제외했습니다."
+      },
+      {
+        label: "문서 완성도",
+        value: documentation,
+        weight: SCORING_CONFIG.reality.documentationWeight,
+        available: readmeSignals.wordCount > 0,
+        status: readmeSignals.wordCount > 0 ? "available" : "insufficient",
+        explanation: "README의 설치, 사용법, 요구사항, 라이선스, 예제, 문제 해결 섹션을 확인했습니다."
+      },
+      {
+        label: "실제 결과물 사례",
+        value: realOutputSignals,
+        weight: SCORING_CONFIG.reality.realOutputWeight,
+        available: readmeSignals.wordCount > 0,
+        status: readmeSignals.hasDemoSignals ? "available" : "insufficient",
+        explanation: readmeSignals.hasDemoSignals ? "README에서 demo/example/showcase 신호를 찾았습니다." : "결과물 사례 신호가 제한적입니다."
+      }
+    ],
+    false
+  );
 }
 
 export function calculateRiskScore(input: ScoreInput): ScoreResult {
   const { github, sources, readmeSignals } = input;
+  const issueOrCommunitySources = sources.filter((source) => source.sourceType !== "github_readme");
+  const hasCommunityEvidence = issueOrCommunitySources.length > 0;
   const openBugLikeIssues = github.issues.filter((issue) => {
     const text = `${issue.title} ${issue.body}`;
     const sentiment = classifySentiment(text);
@@ -189,99 +217,244 @@ export function calculateRiskScore(input: ScoreInput): ScoreResult {
     10
   );
   const apiDependency =
-    /\b(openai|anthropic|gemini|api key|cloud|hosted|token)\b/i.test(github.readme) || readmeSignals.claims.some((claim) => /api|cloud|token/i.test(claim))
-      ? 65
-      : 20;
+    /\b(openai|anthropic|gemini|api key|cloud|hosted|token)\b/i.test(github.readme) || readmeSignals.claims.some((claim) => /api|cloud|token/i.test(claim)) ? 65 : 20;
 
-  const breakdown: ScoreBreakdownItem[] = [
+  return buildScoreResult(
+    [
+      {
+        label: "미해결 버그",
+        value: unresolvedBugs,
+        weight: SCORING_CONFIG.risk.unresolvedBugsWeight,
+        available: github.issues.length > 0 || github.repository.openIssues === 0,
+        status: github.issues.length > 0 || github.repository.openIssues === 0 ? "available" : "insufficient",
+        explanation: `열린 Issue 중 위험 키워드가 있는 항목 ${openBugLikeIssues}개를 반영했습니다.`
+      },
+      {
+        label: "보안·개인정보 Issue",
+        value: security,
+        weight: SCORING_CONFIG.risk.securityWeight,
+        available: hasCommunityEvidence,
+        status: hasCommunityEvidence ? "available" : "insufficient",
+        explanation: hasCommunityEvidence ? "security/privacy 키워드가 있는 근거를 계산했습니다." : "검토할 Issue 또는 Reddit 근거가 부족해 이 신호는 제외했습니다."
+      },
+      {
+        label: "비용 불확실성",
+        value: cost,
+        weight: SCORING_CONFIG.risk.costWeight,
+        available: hasCommunityEvidence,
+        status: hasCommunityEvidence ? "available" : "insufficient",
+        explanation: hasCommunityEvidence ? "API 비용, quota, rate limit 관련 신호를 반영했습니다." : "검토할 커뮤니티 근거가 부족해 이 신호는 제외했습니다."
+      },
+      {
+        label: "설치 복잡도",
+        value: installComplexity,
+        weight: SCORING_CONFIG.risk.installComplexityWeight,
+        available: hasCommunityEvidence,
+        status: hasCommunityEvidence ? "available" : "insufficient",
+        explanation: hasCommunityEvidence ? "설치, 의존성, OS별 오류 신호를 반영했습니다." : "설치 관련 근거가 부족해 이 신호는 제외했습니다."
+      },
+      {
+        label: "특정 API 종속성",
+        value: apiDependency,
+        weight: SCORING_CONFIG.risk.apiDependencyWeight,
+        available: readmeSignals.wordCount > 0,
+        status: readmeSignals.wordCount > 0 ? "available" : "insufficient",
+        explanation: "README와 공식 주장에 외부 API key 또는 클라우드 종속 신호가 있는지 확인했습니다."
+      }
+    ],
+    false
+  );
+}
+
+export function calculateDataCoverage(input: ScoreInput): DataCoverage {
+  const redditStatus = input.redditStatus ?? inferRedditStatus(input.redditPosts);
+  const sources: DataCoverageSource[] = [
     {
-      label: "미해결 버그",
-      value: unresolvedBugs,
-      weight: SCORING_CONFIG.risk.unresolvedBugsWeight,
-      explanation: `열린 Issue 중 위험 키워드가 있는 항목 ${openBugLikeIssues}개를 반영했습니다.`
+      key: "github_repository",
+      label: "GitHub repository metadata",
+      status: "available",
+      collected: 1,
+      expected: 1,
+      coverage: 100,
+      affectsScore: true,
+      note: "Repository metadata was collected."
     },
     {
-      label: "보안·개인정보 Issue",
-      value: security,
-      weight: SCORING_CONFIG.risk.securityWeight,
-      explanation: "security/privacy 키워드가 있는 근거를 계산했습니다."
+      key: "github_issues",
+      label: "GitHub issues",
+      status: input.github.issues.length > 0 ? "available" : "insufficient",
+      collected: input.github.issues.length,
+      expected: 30,
+      coverage: input.github.issues.length > 0 ? normalize(input.github.issues.length, 30) : 20,
+      affectsScore: true,
+      note: `${input.github.issues.length} recent non-PR issues were collected.`
     },
     {
-      label: "비용 불확실성",
-      value: cost,
-      weight: SCORING_CONFIG.risk.costWeight,
-      explanation: "API 비용, quota, rate limit 관련 신호를 반영했습니다."
+      key: "github_commits",
+      label: "GitHub commits",
+      status: input.github.commits.length > 0 ? "available" : "insufficient",
+      collected: input.github.commits.length,
+      expected: 30,
+      coverage: input.github.commits.length > 0 ? normalize(input.github.commits.length, 30) : 20,
+      affectsScore: true,
+      note: `${input.github.commits.length} recent commits were collected.`
     },
     {
-      label: "설치 복잡도",
-      value: installComplexity,
-      weight: SCORING_CONFIG.risk.installComplexityWeight,
-      explanation: "설치, 의존성, OS별 오류 신호를 반영했습니다."
+      key: "github_readme",
+      label: "README",
+      status: input.readmeSignals.wordCount > 0 ? "available" : "insufficient",
+      collected: input.readmeSignals.wordCount,
+      expected: 400,
+      coverage: input.readmeSignals.wordCount > 0 ? input.readmeSignals.completenessScore : 0,
+      affectsScore: true,
+      note: `README completeness score is ${input.readmeSignals.completenessScore}.`
     },
     {
-      label: "특정 API 종속성",
-      value: apiDependency,
-      weight: SCORING_CONFIG.risk.apiDependencyWeight,
-      explanation: "README와 공식 주장에 외부 API key 또는 클라우드 종속 신호가 있는지 확인했습니다."
+      key: "reddit",
+      label: "Reddit search",
+      status: redditStatus,
+      collected: input.redditPosts.length,
+      expected: SCORING_CONFIG.normalization.highRedditMentions,
+      coverage: redditCoverage(redditStatus, input.redditPosts.length),
+      affectsScore: true,
+      note: redditCoverageNote(redditStatus, input.redditPosts.length)
+    },
+    {
+      key: "historical_snapshot",
+      label: "Previous snapshot",
+      status: input.previousSnapshot ? "available" : "insufficient",
+      collected: input.previousSnapshot ? 1 : 0,
+      expected: 1,
+      coverage: input.previousSnapshot ? 100 : 30,
+      affectsScore: true,
+      note: input.previousSnapshot ? "Previous snapshot is available for delta comparison." : "First analysis; exact growth deltas are not available yet."
     }
   ];
 
-  return weightedResult(breakdown, false);
-}
+  const overall = clampScore(sources.reduce((sum, source) => sum + source.coverage, 0) / sources.length);
+  const missingCriticalSignals = sources
+    .filter((source) => source.affectsScore && !isScoreAvailable(source.status))
+    .map((source) => source.label);
 
-function weightedResult(breakdown: ScoreBreakdownItem[], provisional: boolean): ScoreResult {
-  const value = breakdown.reduce((sum, item) => sum + item.value * item.weight, 0);
   return {
-    value: clampScore(value),
-    provisional,
-    breakdown
+    overall,
+    scoreImpact: overall >= 80 ? "complete" : overall >= 45 ? "partial" : "limited",
+    sources,
+    missingCriticalSignals
   };
 }
 
-function calculateConfidence(input: ScoreInput): { level: ConfidenceLevel; reasons: string[] } {
+function buildScoreResult(signals: WeightedSignal[], provisional: boolean): ScoreResult {
+  const result = calculateWeightedScore(signals);
+  return {
+    value: result.value,
+    provisional,
+    breakdown: result.breakdown,
+    availableWeight: result.availableWeight,
+    missingSignals: result.missingSignals,
+    dataLimited: result.dataLimited
+  };
+}
+
+function calculateConfidence(input: ScoreInput, dataCoverage: DataCoverage): { level: ConfidenceLevel; reasons: string[] } {
+  const redditStatus = input.redditStatus ?? inferRedditStatus(input.redditPosts);
   const reasons: string[] = [];
   let points = 0;
 
   if (input.github.issues.length >= 20) {
     points += 2;
-    reasons.push("Issue 데이터가 충분합니다.");
+    reasons.push("Issue data is strong: 20 or more recent issues were collected.");
   } else if (input.github.issues.length >= 5) {
     points += 1;
-    reasons.push("Issue 데이터가 일부 수집되었습니다.");
+    reasons.push("Issue data is usable but not broad.");
   } else {
-    reasons.push("Issue 데이터가 적어 신뢰도가 낮아질 수 있습니다.");
+    reasons.push("Issue data is sparse, so issue-based conclusions are limited.");
   }
 
-  if (input.redditPosts.length >= 5) {
+  if (redditStatus === "available" && input.redditPosts.length >= 5) {
     points += 2;
-    reasons.push("Reddit 게시물이 여러 개 수집되었습니다.");
-  } else if (input.redditPosts.length > 0) {
+    reasons.push("Reddit data is available with multiple posts.");
+  } else if (redditStatus === "available" || redditStatus === "insufficient") {
     points += 1;
-    reasons.push("Reddit 게시물이 일부 수집되었습니다.");
+    reasons.push("Reddit search was available, but community evidence is limited.");
   } else {
-    reasons.push("Reddit 데이터가 없거나 연결되지 않았습니다.");
+    reasons.push("Reddit data was not available and was excluded from score weighting.");
   }
 
   if (input.previousSnapshot) {
     points += 1;
-    reasons.push("이전 Snapshot과 비교할 수 있습니다.");
+    reasons.push("A previous snapshot is available for real growth comparison.");
   } else {
-    reasons.push("최초 분석이라 증가량 데이터가 부족합니다.");
+    reasons.push("This is the first analysis, so growth deltas are provisional.");
   }
 
   if (input.readmeSignals.wordCount > 400 && input.readmeSignals.completenessScore >= 50) {
     points += 2;
-    reasons.push("README 구조와 길이가 분석에 충분합니다.");
+    reasons.push("README structure and length are sufficient for documentation analysis.");
+  } else if (input.readmeSignals.wordCount > 0) {
+    points += 1;
+    reasons.push("README exists, but documentation coverage is limited.");
   } else {
-    reasons.push("README 정보가 짧거나 주요 섹션이 부족합니다.");
+    reasons.push("README data is missing or empty.");
   }
 
   const lastPush = input.github.repository.pushedAt ?? input.github.repository.updatedAt;
   if (daysBetween(lastPush) <= 60) {
     points += 1;
-    reasons.push("저장소 활동이 비교적 최신입니다.");
+    reasons.push("Repository activity is recent.");
   }
 
-  const level: ConfidenceLevel = points >= 6 ? "High" : points >= 3 ? "Medium" : "Low";
+  if (dataCoverage.overall >= 75) {
+    points += 1;
+    reasons.push(`Data coverage is ${dataCoverage.overall}%.`);
+  } else {
+    reasons.push(`Data coverage is ${dataCoverage.overall}%, so confidence is limited.`);
+  }
+
+  const level: ConfidenceLevel = points >= 7 ? "High" : points >= 4 ? "Medium" : "Low";
   return { level, reasons };
+}
+
+function inferRedditStatus(posts: RedditPost[]): DataSourceStatus {
+  return posts.length > 0 ? "available" : "not_configured";
+}
+
+function isScoreAvailable(status: DataSourceStatus): boolean {
+  return status === "available" || status === "insufficient";
+}
+
+function redditCoverage(status: DataSourceStatus, postCount: number): number {
+  if (status === "available") {
+    return Math.max(40, normalize(postCount, SCORING_CONFIG.normalization.highRedditMentions));
+  }
+
+  if (status === "insufficient") {
+    return 25;
+  }
+
+  return 0;
+}
+
+function redditExplanation(status: DataSourceStatus, postCount: number): string {
+  if (status === "available") {
+    return `${postCount} Reddit posts were collected and counted as a hype signal.`;
+  }
+
+  if (status === "insufficient") {
+    return "Reddit search was available but returned little or no evidence, so it is counted as a low mention signal.";
+  }
+
+  return `Reddit data source is ${status}; this signal is excluded and the remaining Hype weights are normalized.`;
+}
+
+function redditCoverageNote(status: DataSourceStatus, postCount: number): string {
+  if (status === "available") {
+    return `${postCount} Reddit posts were collected.`;
+  }
+
+  if (status === "insufficient") {
+    return "Reddit search was reachable but returned insufficient evidence.";
+  }
+
+  return `Reddit data source is ${status}.`;
 }

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Info } from "lucide-react";
 import { ConfidenceBadge } from "@/components/common/StatusBadge";
 import { CanvaPromptPanel } from "@/components/analysis/CanvaPromptPanel";
+import { DataCoveragePanel } from "@/components/analysis/DataCoveragePanel";
 import { RepositoryOverview } from "@/components/analysis/RepositoryOverview";
 import { ScoreBreakdown } from "@/components/analysis/ScoreBreakdown";
 import { SourceCards } from "@/components/analysis/SourceCards";
@@ -74,6 +75,8 @@ export default async function AnalysisPage({ params }: { params: Promise<{ id: s
             </div>
           </div>
         </section>
+
+        <DataCoveragePanel coverage={analysis.scores.dataCoverage} />
 
         {analysis.notices.length > 0 ? (
           <section className="rounded-lg border border-[#d9dee7] bg-white p-5 shadow-sm">

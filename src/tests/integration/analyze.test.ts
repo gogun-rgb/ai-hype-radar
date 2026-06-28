@@ -142,6 +142,9 @@ describe("runAnalysis integration", () => {
     expect(result.collectedCounts.issues).toBe(1);
     expect(result.collectedCounts.redditPosts).toBe(0);
     expect(result.scores.hype.value).toBeGreaterThanOrEqual(0);
+    expect(result.scores.dataCoverage.overall).toBeGreaterThanOrEqual(0);
+    expect(result.scores.dataCoverage.sources.find((source) => source.key === "reddit")?.status).toBe("not_configured");
+    expect(result.scores.hype.breakdown.find((item) => item.label === "Reddit 언급량")?.available).toBe(false);
     expect(result.qualitative.aiGenerated).toBe(false);
     expect(result.canvaPrompt).toContain("총 6장");
   });

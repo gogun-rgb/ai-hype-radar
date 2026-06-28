@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { calculateHypeScore, calculateRealityScore, calculateRiskScore, calculateScores } from "@/lib/scoring/calculate";
-import { clampScore } from "@/lib/scoring/utils";
-import type { AnalysisSource, GitHubData, ReadmeSignals } from "@/types/analysis";
+import { calculateWeightedScore, clampScore, normalizeAvailableWeights } from "@/lib/scoring/utils";
+import type { AnalysisSource, GitHubData, ReadmeSignals, RedditPost } from "@/types/analysis";
 
 const now = new Date();
 const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
@@ -111,6 +111,18 @@ const sources: AnalysisSource[] = [
   }
 ];
 
+const redditPost: RedditPost = {
+  id: "r1",
+  title: "repo works",
+  body: "I tried this repo and it works",
+  subreddit: "LocalLLaMA",
+  createdAt: daysAgo(2),
+  score: 20,
+  comments: 5,
+  url: "https://www.reddit.com/r/LocalLLaMA/comments/r1",
+  permalink: "https://www.reddit.com/r/LocalLLaMA/comments/r1/repo_works"
+};
+
 describe("scoring", () => {
   it("clamps scores to 0-100", () => {
     expect(clampScore(-10)).toBe(0);
@@ -129,5 +141,53 @@ describe("scoring", () => {
     const result = calculateScores({ github: githubFixture(), redditPosts: [], sources, readmeSignals, previousSnapshot: null });
     expect(["Low", "Medium", "High"]).toContain(result.confidence);
     expect(result.confidenceReasons.join(" ")).toContain("Reddit");
+  });
+
+  it("renormalizes weights when a signal is unavailable", () => {
+    const breakdown = normalizeAvailableWeights([
+      { label: "GitHub", value: 80, weight: 0.75, available: true, explanation: "available" },
+      { label: "Reddit", value: 0, weight: 0.25, available: false, status: "not_configured", explanation: "missing" }
+    ]);
+
+    expect(breakdown[0].weight).toBe(1);
+    expect(breakdown[1].weight).toBe(0);
+    expect(breakdown[1].originalWeight).toBe(0.25);
+  });
+
+  it("does not force unavailable Reddit data to zero in the Hype Score", () => {
+    const baseInput = { github: githubFixture(), sources, readmeSignals, previousSnapshot: null };
+    const unavailableReddit = calculateHypeScore({ ...baseInput, redditPosts: [], redditStatus: "not_configured" });
+    const availableButNoMentions = calculateHypeScore({ ...baseInput, redditPosts: [], redditStatus: "insufficient" });
+    const redditItem = unavailableReddit.breakdown.find((item) => item.label === "Reddit 언급량");
+
+    expect(redditItem?.available).toBe(false);
+    expect(redditItem?.weight).toBe(0);
+    expect(unavailableReddit.availableWeight).toBeCloseTo(0.7);
+    expect(unavailableReddit.value).toBeGreaterThan(availableButNoMentions.value);
+  });
+
+  it("keeps available Reddit mentions in the normalized Hype Score", () => {
+    const result = calculateScores({
+      github: githubFixture(),
+      redditPosts: [redditPost],
+      redditStatus: "available",
+      sources,
+      readmeSignals,
+      previousSnapshot: null
+    });
+
+    expect(result.dataCoverage.sources.find((source) => source.key === "reddit")?.status).toBe("available");
+    expect(result.hype.breakdown.find((item) => item.label === "Reddit 언급량")?.available).toBe(true);
+  });
+
+  it("returns low-confidence limited data when no weighted signals are available", () => {
+    const result = calculateWeightedScore([
+      { label: "missing-a", value: 100, weight: 0.5, available: false, status: "failed", explanation: "failed" },
+      { label: "missing-b", value: 100, weight: 0.5, available: false, status: "not_configured", explanation: "missing" }
+    ]);
+
+    expect(result.value).toBe(0);
+    expect(result.dataLimited).toBe(true);
+    expect(result.breakdown.every((item) => item.weight === 0)).toBe(true);
   });
 });
