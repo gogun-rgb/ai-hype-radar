@@ -8,22 +8,26 @@ const readinessUrl = "http://[::1]:3000/api/analyses";
 const nextBin = path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
 const playwrightBin = path.join(process.cwd(), "node_modules", "playwright", "cli.js");
 
-const server = spawn(process.execPath, [nextBin, "dev", "--hostname", "localhost"], {
-  cwd: process.cwd(),
-  stdio: "inherit",
-  env: {
-    ...process.env,
-    DEMO_MODE: "true",
-    E2E_DEMO: "true",
-    NEXT_PUBLIC_APP_URL: localUrl,
-    NO_PROXY: "localhost,127.0.0.1,::1",
-    no_proxy: "localhost,127.0.0.1,::1"
-  }
-});
-
 let exitCode = 0;
+let server;
 
 try {
+  const alreadyRunning = await isServerReady(readinessUrl);
+  if (!alreadyRunning) {
+    server = spawn(process.execPath, [nextBin, "dev", "--hostname", "localhost"], {
+      cwd: process.cwd(),
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        DEMO_MODE: "true",
+        E2E_DEMO: "true",
+        NEXT_PUBLIC_APP_URL: localUrl,
+        NO_PROXY: "localhost,127.0.0.1,::1",
+        no_proxy: "localhost,127.0.0.1,::1"
+      }
+    });
+  }
+
   await waitForServer(readinessUrl, 45_000);
 
   const result = spawnSync(process.execPath, [playwrightBin, "test", "--config", "playwright.config.ts", "--reporter", "list"], {
@@ -47,7 +51,9 @@ try {
   console.error(error);
   exitCode = 1;
 } finally {
-  stopProcessTree(server.pid);
+  if (server) {
+    stopProcessTree(server.pid);
+  }
 }
 
 process.exit(exitCode);
@@ -70,6 +76,15 @@ async function waitForServer(url, timeoutMs) {
   }
 
   throw new Error(`Next dev server did not become ready: ${lastError instanceof Error ? lastError.message : "unknown error"}`);
+}
+
+async function isServerReady(url) {
+  try {
+    const response = await httpGet(url);
+    return Boolean(response.statusCode && response.statusCode >= 200 && response.statusCode < 400);
+  } catch {
+    return false;
+  }
 }
 
 function httpGet(url) {

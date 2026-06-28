@@ -1,6 +1,8 @@
 import { qualitativeJsonSchema, qualitativeSummarySchema } from "@/lib/openai/schema";
 import type { AnalysisSource, QualitativeSummary, ReadmeSignals, Scores } from "@/types/analysis";
 
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+
 interface OpenAIChatCompletionResponse {
   choices?: Array<{
     message?: {
@@ -28,7 +30,7 @@ export async function generateQualitativeSummary(input: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL ?? "gpt-5.5",
+        model: process.env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL,
         messages: [
           {
             role: "system",

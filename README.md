@@ -1,5 +1,7 @@
 # AI Hype Radar
 
+[English README](README.en.md)
+
 GitHub와 Reddit 데이터를 바탕으로 AI 오픈소스 프로젝트의 화제성, 실사용성, 위험도를 분석하는 Next.js MVP입니다. 점수는 LLM이 임의로 만들지 않고 GitHub/Reddit 신호를 코드로 정규화해 계산하며, OpenAI는 해설과 요약을 보강하는 용도로만 사용합니다.
 
 ## 주요 기능
@@ -64,6 +66,7 @@ Copy-Item .env.example .env.local
 | --- | --- | --- |
 | `GITHUB_TOKEN` | GitHub API rate limit 완화 | 공개 저장소는 비인증 요청으로 시도 |
 | `OPENAI_API_KEY` | 한국어 해설, 주장 비교, 카드뉴스 문구 보강 | 규칙 기반 요약으로 대체 |
+| `OPENAI_MODEL` | OpenAI 해설 생성에 사용할 모델 | `gpt-4o-mini` 기본값 사용 |
 | `REDDIT_CLIENT_ID` | Reddit OAuth 검색 | Reddit 분석 비활성화 |
 | `REDDIT_CLIENT_SECRET` | Reddit OAuth 검색 | Reddit 분석 비활성화 |
 | `REDDIT_USER_AGENT` | Reddit API 필수 User-Agent | Reddit 분석 비활성화 |
@@ -91,6 +94,7 @@ Supabase를 쓰려면 새 프로젝트를 만든 뒤 SQL editor에서 `supabase/
 npm run dev
 npm run build
 npm run start
+npm run typegen
 ```
 
 ## 테스트 명령어
