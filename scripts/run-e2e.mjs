@@ -3,8 +3,8 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 
-const localUrl = "http://localhost:3000";
-const readinessUrl = "http://[::1]:3000/api/analyses";
+const localUrl = "http://127.0.0.1:3000";
+const readinessUrl = `${localUrl}/api/analyses`;
 const nextBin = path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
 const playwrightBin = path.join(process.cwd(), "node_modules", "playwright", "cli.js");
 
@@ -14,7 +14,7 @@ let server;
 try {
   const alreadyRunning = await isServerReady(readinessUrl);
   if (!alreadyRunning) {
-    server = spawn(process.execPath, [nextBin, "dev", "--hostname", "localhost"], {
+    server = spawn(process.execPath, [nextBin, "dev", "--hostname", "127.0.0.1"], {
       cwd: process.cwd(),
       stdio: "inherit",
       env: {
@@ -22,8 +22,8 @@ try {
         DEMO_MODE: "true",
         E2E_DEMO: "true",
         NEXT_PUBLIC_APP_URL: localUrl,
-        NO_PROXY: "localhost,127.0.0.1,::1",
-        no_proxy: "localhost,127.0.0.1,::1"
+        NO_PROXY: "127.0.0.1,localhost,::1",
+        no_proxy: "127.0.0.1,localhost,::1"
       }
     });
   }
@@ -37,8 +37,8 @@ try {
       ...process.env,
       PLAYWRIGHT_SKIP_WEBSERVER: "true",
       PLAYWRIGHT_BASE_URL: localUrl,
-      NO_PROXY: "localhost,127.0.0.1,::1",
-      no_proxy: "localhost,127.0.0.1,::1"
+      NO_PROXY: "127.0.0.1,localhost,::1",
+      no_proxy: "127.0.0.1,localhost,::1"
     }
   });
 
